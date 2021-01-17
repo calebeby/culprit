@@ -7,6 +7,7 @@ import { parseStackTrace } from 'errorstacks'
 import { promises as fs } from 'fs'
 import { createCodeFrame } from './code-frame'
 import { fileURLToPath } from 'url'
+import expectGlobal from './expect'
 
 interface Test {
   name: string
@@ -92,43 +93,3 @@ const main = async () => {
 }
 
 main()
-
-const expectedColor = colors.green
-const receivedColor = colors.red
-
-const expectGlobal = (received: unknown) => {
-  const matchers = {
-    toEqual(expected) {
-      if (received === expected) return
-      const message = `expect(${receivedColor(
-        'received',
-      )}).toEqual(${expectedColor('expected')})
-
-Expected: ${expectedColor(expected)}
-Received: ${receivedColor(received)}`
-
-      throw removeFuncFromStackTrace(
-        new MatcherError(message),
-        matchers.toEqual,
-      )
-    },
-  }
-  return matchers
-}
-
-class MatcherError extends Error {}
-
-/**
- * Manipulate the stack trace and remove fn from it
- * That way jest will show a code frame from the user's code, not ours
- * https://kentcdodds.com/blog/improve-test-error-messages-of-your-abstractions
- */
-const removeFuncFromStackTrace = (
-  error: Error,
-  fn: (...params: any[]) => any,
-) => {
-  if (Error.captureStackTrace) {
-    Error.captureStackTrace(error, fn)
-  }
-  return error
-}
