@@ -3,7 +3,7 @@
 // Idea is from Prettier: https://prettier.io/docs/en/technical-details.html
 // More details: https://github.com/prettier/prettier/blob/master/commands.md
 
-export type IR = string | Group | Text | Line | IfBreak | Indent | Dedent
+export type IR = string | Group | Text | Line | IfBreak | Indent | Dedent | IR[]
 
 export type Marker = '+' | '-'
 

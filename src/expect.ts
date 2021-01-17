@@ -50,7 +50,8 @@ const printDiff = (expected: any, received: any): StructuredObject => {
                 key: 'hi',
                 value: {
                   type: 'String',
-                  value: 'hiiiiiiiiiiiiiiiiiiiiiiiiiiii',
+                  // value: 'hiiiiiiiiiiiiiiiiiiiiiiiiiiii',
+                  value: 'hiiiiiiiiiiiiiii',
                 },
               },
             ],
@@ -139,11 +140,15 @@ const diffPropertyToIR = (
   //   asdf
   // )
   const propertyIR: IR[] = [key + ':']
-  if (typeof valueIR === 'object' && valueIR.type === IRC.types.IR_GROUP) {
+  if (
+    typeof valueIR === 'object' &&
+    !Array.isArray(valueIR) &&
+    valueIR.type === IRC.types.IR_GROUP
+  ) {
     propertyIR.push(' ', valueIR)
   } else {
     propertyIR.push(
-      IRC.ifBreak(IRC.indent([IRC.line, valueIR]), IRC.group([' ', valueIR])),
+      IRC.ifBreak(IRC.indent([IRC.line, valueIR]), [' ', valueIR]),
     )
   }
   return IRC.group(propertyIR, marker)
@@ -185,7 +190,7 @@ const diffToIR = (diff: Diff<Structured>): IR => {
       }
       return IRC.group([
         '{',
-        IRC.ifBreak(IRC.indent(objectIR), IRC.group(objectIR)),
+        IRC.ifBreak(IRC.indent(objectIR), objectIR),
         IRC.lineOrSpace,
         '}',
       ])
@@ -193,11 +198,13 @@ const diffToIR = (diff: Diff<Structured>): IR => {
     if (diff.type === 'String') {
       if (typeof diff.value === 'string') return '"' + diff.value + '"'
       const out: IR[] = []
-      if (diff.value.expected !== NOT_EXIST)
-        out.push('"' + expectedColor(diff.value.expected) + '"')
-      if (diff.value.received !== NOT_EXIST)
-        out.push('"' + receivedColor(diff.value.received) + '"')
-      return IRC.group(out)
+      const { expected, received } = diff.value
+      if (expected !== NOT_EXIST) {
+        out.push('"' + expectedColor(expected) + '"')
+        if (received !== NOT_EXIST) out.push(IRC.line)
+      }
+      if (received !== NOT_EXIST) out.push('"' + receivedColor(received) + '"')
+      return out
     }
     return 'Toad'
   } else {
@@ -225,6 +232,28 @@ const IRToString = (
       breakParent: ir.length > remainingWidth,
       str: ir,
       width: ir.length,
+    }
+  }
+  if (Array.isArray(ir)) {
+    let width = 0
+    let str = ''
+    let breakParent = false
+    for (const c of ir) {
+      const s = IRToString(
+        c,
+        indent + indentWidth,
+        parentBroken,
+        remainingWidth - width,
+      )
+      width += s.width
+      str += s.str
+      if (s.breakParent) breakParent = true
+    }
+    return {
+      str,
+      width,
+      breakParent,
+      markers: [], // TODO: handle markers
     }
   }
   if (ir.type === IRC.types.IR_TEXT)
