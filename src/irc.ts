@@ -65,13 +65,14 @@ export const text = (
   return { type: IR_TEXT, text, marker, width }
 }
 export const group = (children: IR[], marker?: Marker): Group => {
-  const shouldBreak =
-    children.some((c) => {
-      if (typeof c === 'string') return false
-      if (c.type === IR_TEXT && c.marker) return true
-      if (c.type === IR_GROUP && (c.shouldBreak || c.marker)) return true
-      return false
-    }) || undefined
+  const childIsBroken = (c: IR) => {
+    if (typeof c === 'string') return false
+    if (Array.isArray(c)) return c.some(childIsBroken)
+    if (c.type === IR_TEXT && c.marker) return true
+    if (c.type === IR_GROUP && (c.shouldBreak || c.marker)) return true
+    return false
+  }
+  const shouldBreak = children.some(childIsBroken) || undefined
   return { type: IR_GROUP, children, shouldBreak, marker }
 }
 export const ifBreak = (ifBreak: IR, ifNotBreak: IR = ''): IfBreak => {

@@ -216,6 +216,39 @@ const diffToIR = (diff: Diff<Structured>): IR => {
 const printWidth = 80
 const indentWidth = 2
 
+const fits = (commands: IR[], width: number) => {
+  let cmd: IR,
+    cmdIdx = 0
+  const queue = commands.slice() // make a copy because we will modify it
+  while (width > 0) {
+    if (cmdIdx === commands.length) return true
+    cmd = queue[cmdIdx]
+
+    if (typeof cmd === 'string') {
+      width -= cmd.length
+    } else if (Array.isArray(cmd)) {
+      queue.push(...cmd)
+    } else if (cmd.type === IRC.types.IR_TEXT) {
+      width -= cmd.width
+    } else if (cmd.type === IRC.types.IR_LINE) {
+      // there is a line break, therefore it won't fit in the allocated space
+      return false
+    } else if (cmd.type === IRC.types.IR_GROUP) {
+      if (cmd.shouldBreak) return false
+      queue.push(...cmd.children)
+    } else if (cmd.type === IRC.types.IR_IF_BREAK) {
+      // in order to see if everything will fit in one line,
+      // measure using the non-broken version
+      queue.push(cmd.ifNotBreak)
+    } else {
+      // ignoring: indent and dedent
+    }
+
+    cmdIdx++
+  }
+  return false
+}
+
 const IRToString = (
   ir: IR,
   indent: number,
