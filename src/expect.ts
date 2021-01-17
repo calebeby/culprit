@@ -65,7 +65,7 @@ const printDiff = (expected: any, received: any): StructuredObject => {
           type: 'Object',
           properties: [
             {
-              key: 'hi',
+              key: 'hiiii',
               value: {
                 expected: {
                   type: 'String',
@@ -177,7 +177,7 @@ const diffToIR = (diff: Diff<Structured>): IR => {
               diffPropertyToIR({ key: prop.key, value: expected }, '-'),
               comma,
               expClose,
-              IRC.line,
+              received !== NOT_EXIST ? IRC.line : '',
             )
           if (received !== NOT_EXIST)
             objectIR.push(
@@ -213,17 +213,18 @@ const diffToIR = (diff: Diff<Structured>): IR => {
   return 'TOODOOO'
 }
 
-const printWidth = 80
+const printWidth = 40
 const indentWidth = 2
 
 const fits = (commands: IR[], width: number) => {
   let cmd: IR,
     cmdIdx = 0
+  // the order of the items in the queue doesn't actually matter
+  // since we are just measuring the width
   const queue = commands.slice() // make a copy because we will modify it
   while (width > 0) {
-    if (cmdIdx === commands.length) return true
+    if (cmdIdx >= queue.length) return true
     cmd = queue[cmdIdx]
-
     if (typeof cmd === 'string') {
       width -= cmd.length
     } else if (Array.isArray(cmd)) {
@@ -240,8 +241,11 @@ const fits = (commands: IR[], width: number) => {
       // in order to see if everything will fit in one line,
       // measure using the non-broken version
       queue.push(cmd.ifNotBreak)
+    } else if (cmd.type === IRC.types.IR_INDENT) {
+      // we don't care about the actual width of the indent (maybe we should?) TODO
+      queue.push(...cmd.children)
     } else {
-      // ignoring: indent and dedent
+      // ignoring: dedent
     }
 
     cmdIdx++
@@ -249,127 +253,64 @@ const fits = (commands: IR[], width: number) => {
   return false
 }
 
-const IRToString = (
-  ir: IR,
-  indent: number,
-  parentBroken: boolean,
-  remainingWidth: number,
-): {
-  breakParent: boolean
-  str: string
-  markers?: [lineNo: number, marker: Marker][]
-  width: number
-} => {
-  if (typeof ir === 'string') {
-    return {
-      breakParent: ir.length > remainingWidth,
-      str: ir,
-      width: ir.length,
-    }
-  }
-  if (Array.isArray(ir)) {
-    let width = 0
-    let str = ''
-    let breakParent = false
-    for (const c of ir) {
-      const s = IRToString(
-        c,
-        indent + indentWidth,
-        parentBroken,
-        remainingWidth - width,
-      )
-      width += s.width
-      str += s.str
-      if (s.breakParent) breakParent = true
-    }
-    return {
-      str,
-      width,
-      breakParent,
-      markers: [], // TODO: handle markers
-    }
-  }
-  if (ir.type === IRC.types.IR_TEXT)
-    return {
-      breakParent: ir.width > remainingWidth,
-      str: ir.text,
-      // marker on first line
-      markers: ir.marker ? [[0, ir.marker]] : [],
-      width: ir.width,
-    }
-  if (ir.type === IRC.types.IR_GROUP) {
-    let out = ''
-    let i = 0
-    let groupWidth = 0
-    while (i < ir.children.length) {
-      const child = ir.children[i]
-      const childRes = IRToString(
-        child,
-        indent,
-        ir.shouldBreak || false,
-        remainingWidth - groupWidth,
-      )
-      if (childRes.breakParent && !ir.shouldBreak) {
-        // child forces this group to break, re-print the previous childs that thought it was not broken
-        ir.shouldBreak = true
-        i = 0
-        out = ''
-        groupWidth = 0
-        continue
-      }
-      out += childRes.str
-      groupWidth += childRes.width
-      i++
-    }
-    return {
-      str: out,
-      breakParent: ir.shouldBreak || false,
-      markers: [], // TODO: handle markers
-      width: groupWidth,
-    }
-  }
-  if (ir.type === IRC.types.IR_LINE)
-    return {
-      breakParent: true,
-      // TODO: the indent there is not working
-      str: '\n' + ' '.repeat(indent),
-      width: remainingWidth - printWidth, // Reset the parent's width if a newline is printed
-    }
-  if (ir.type === IRC.types.IR_IF_BREAK)
-    return IRToString(
-      parentBroken ? ir.ifBreak : ir.ifNotBreak,
-      indent,
-      parentBroken,
-      remainingWidth,
-    )
+const POP_GROUP_STACK = Symbol('POP_GROUP_STACK')
 
-  if (ir.type === IRC.types.IR_INDENT) {
-    let width = indentWidth
-    let str = ' '.repeat(indentWidth)
-    let breakParent = false
-    for (const c of ir.children) {
-      const s = IRToString(
-        c,
-        indent + indentWidth,
-        parentBroken,
-        remainingWidth - width,
-      )
-      width += s.width
-      str += s.str
-      if (s.breakParent) breakParent = true
-    }
-    return {
-      str,
-      width,
-      breakParent,
-      markers: [], // TODO: handle markers
+const IRToString = (ir: IR) => {
+  // the queue holds next-to-handle items at the end
+  // (so it is in reverse of the actual output)
+  const queue: (IR | typeof POP_GROUP_STACK)[] = [ir]
+  let cmd: IR | typeof POP_GROUP_STACK | undefined
+  let out: string[] = []
+  const groupStack: IRC.Group[] = []
+  /** Position in current line (including indents) */
+  let pos = 0
+  let currentIndent = 0
+  while ((cmd = queue.pop()) !== undefined) {
+    if (typeof cmd === 'string') {
+      out.push(cmd)
+      pos += cmd.length
+    } else if (Array.isArray(cmd)) {
+      queue.push(...cmd.slice().reverse())
+    } else if (cmd === POP_GROUP_STACK) {
+      groupStack.pop()
+    } else if (cmd.type === IRC.types.IR_TEXT) {
+      // TODO: handle markers
+      out.push(cmd.text)
+      pos += cmd.width
+    } else if (cmd.type === IRC.types.IR_GROUP) {
+      groupStack.push(cmd)
+      const remainingSpaceInLine = printWidth - pos
+      const needsToBreak =
+        cmd.shouldBreak || !fits(cmd.children, remainingSpaceInLine)
+      // queue is backwards
+      queue.push(POP_GROUP_STACK, ...cmd.children.slice().reverse())
+      cmd.shouldBreak = needsToBreak
+    } else if (cmd.type === IRC.types.IR_LINE) {
+      out.push('\n' + ' '.repeat(currentIndent))
+      pos = currentIndent // reset the position to just the indent since we are on a new line
+    } else if (cmd.type === IRC.types.IR_IF_BREAK) {
+      const { shouldBreak } = groupStack[groupStack.length - 1] || {}
+      queue.push(shouldBreak ? cmd.ifBreak : cmd.ifNotBreak)
+    } else if (cmd.type === IRC.types.IR_INDENT) {
+      // ends with newline, put an indent after that
+      if (out[out.length - 1] === '\n') {
+        out.push(' '.repeat(currentIndent), '\n')
+      }
+      // queue is backwards
+      queue.push(IRC.dedent, ...cmd.children.slice().reverse())
+      currentIndent += indentWidth
+    } else if (cmd.type === IRC.types.IR_DEDENT) {
+      currentIndent -= indentWidth
+    } else {
+      // @ts-expect-error
+      throw new Error(`unhandled, ${String(cmd.type)}`)
     }
   }
-  return { str: String(ir), breakParent: false, width: String(ir).length }
+  return out.join('')
 }
 
 const formatDiff = (diff: StructuredObject) => {
-  return IRToString(diffToIR(diff), 0, false, printWidth).str
+  return IRToString(diffToIR(diff))
 }
 
 const expect = (received: unknown) => {

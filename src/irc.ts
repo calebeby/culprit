@@ -33,7 +33,6 @@ export interface Indent {
 }
 export interface Dedent {
   type: typeof IR_DEDENT
-  children: IR[]
 }
 
 const IR_TEXT = Symbol('text')
@@ -81,9 +80,7 @@ export const ifBreak = (ifBreak: IR, ifNotBreak: IR = ''): IfBreak => {
 export const indent = (children: IR[]): Indent => {
   return { type: IR_INDENT, children }
 }
-export const dedent = (children: IR[]): Dedent => {
-  return { type: IR_DEDENT, children }
-}
+export const dedent: Dedent = { type: IR_DEDENT }
 
 export const line: Line = { type: IR_LINE }
 
