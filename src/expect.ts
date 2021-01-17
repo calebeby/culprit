@@ -41,6 +41,52 @@ const printDiff = (expected: any, received: any): StructuredObject => {
         },
       },
       {
+        key: 'sdf',
+        value: {
+          expected: {
+            type: 'Object',
+            properties: [
+              {
+                key: 'hi',
+                value: {
+                  type: 'String',
+                  value: 'hiiiiiiiiiiiiiiiiiiiiiiiiiiii',
+                },
+              },
+            ],
+          },
+          received: { type: 'String', value: 'hi' },
+        },
+      },
+      {
+        key: 'hi',
+        value: {
+          type: 'Object',
+          properties: [
+            {
+              key: 'hi',
+              value: {
+                expected: {
+                  type: 'String',
+                  value: 'hi',
+                },
+                received: {
+                  type: 'Object',
+                  properties: [],
+                },
+              },
+            },
+            {
+              key: 'hi2',
+              value: {
+                type: 'String',
+                value: 'hi',
+              },
+            },
+          ],
+        },
+      },
+      {
         key: 'asdf',
         value: {
           expected: NOT_EXIST,
@@ -75,7 +121,10 @@ const [recOpen, recClose] = receivedColor('reee')
   .split('reee')
   .map((c) => IRC.text(c, 0))
 
-const diffPropertyToIR = (prop: { key: string; value: Diff<Structured> }) => {
+const diffPropertyToIR = (
+  prop: { key: string; value: Diff<Structured> },
+  marker?: Marker,
+) => {
   const key = IDENTIFIER_REGEX.test(prop.key)
     ? prop.key
     : JSON.stringify(prop.key)
@@ -97,18 +146,21 @@ const diffPropertyToIR = (prop: { key: string; value: Diff<Structured> }) => {
       IRC.ifBreak(IRC.indent([IRC.line, valueIR]), IRC.group([' ', valueIR])),
     )
   }
-  return IRC.group(propertyIR)
+  return IRC.group(propertyIR, marker)
 }
 
 const diffToIR = (diff: Diff<Structured>): IR => {
   if ('type' in diff) {
     if (diff.type === 'Object') {
+      if (diff.properties.length === 0) return '{}'
       const objectIR: IR[] = []
+      const lastProp = diff.properties[diff.properties.length - 1]
       for (const prop of diff.properties) {
+        const comma = prop === lastProp ? IRC.ifBreak(',', '') : ','
         objectIR.push(IRC.lineOrSpace)
         // the values are the same type, so the key will be printed only once
         if ('type' in prop.value) {
-          objectIR.push(diffPropertyToIR(prop), ',')
+          objectIR.push(diffPropertyToIR(prop), comma)
         } else {
           // The values are different types, so the key will be printed twice:
           // property: [ ... ]
@@ -117,15 +169,16 @@ const diffToIR = (diff: Diff<Structured>): IR => {
           if (expected !== NOT_EXIST)
             objectIR.push(
               expOpen,
-              diffPropertyToIR({ key: prop.key, value: expected }),
-              ',',
+              diffPropertyToIR({ key: prop.key, value: expected }, '-'),
+              comma,
               expClose,
+              IRC.line,
             )
           if (received !== NOT_EXIST)
             objectIR.push(
               recOpen,
-              diffPropertyToIR({ key: prop.key, value: received }),
-              ',',
+              diffPropertyToIR({ key: prop.key, value: received }, '+'),
+              comma,
               recClose,
             )
         }
@@ -153,7 +206,7 @@ const diffToIR = (diff: Diff<Structured>): IR => {
   return 'TOODOOO'
 }
 
-const printWidth = 22
+const printWidth = 80
 const indentWidth = 2
 
 const IRToString = (
