@@ -35,8 +35,8 @@ const printDiff = (expected: any, received: any): StructuredObject => {
         value: {
           type: 'String',
           value: {
-            expected: 'hi',
-            received: 'no',
+            expected: 'hiiiiiiii',
+            received: 'noooooooo',
           },
         },
       },
@@ -68,6 +68,13 @@ const printDiff = (expected: any, received: any): StructuredObject => {
 // this is naiive it doesn't handle reserved words or unicode
 const IDENTIFIER_REGEX = /^[$A-Z_][0-9A-Z_$]*$/i
 
+const [expOpen, expClose] = expectedColor('reee')
+  .split('reee')
+  .map((c) => IRC.text(c, 0))
+const [recOpen, recClose] = receivedColor('reee')
+  .split('reee')
+  .map((c) => IRC.text(c, 0))
+
 const diffPropertyToIR = (prop: { key: string; value: Diff<Structured> }) => {
   const key = IDENTIFIER_REGEX.test(prop.key)
     ? prop.key
@@ -87,7 +94,7 @@ const diffPropertyToIR = (prop: { key: string; value: Diff<Structured> }) => {
     propertyIR.push(' ', valueIR)
   } else {
     propertyIR.push(
-      IRC.ifBreak(IRC.indent([IRC.lineOrSpace, valueIR]), valueIR),
+      IRC.ifBreak(IRC.indent([IRC.line, valueIR]), IRC.group([' ', valueIR])),
     )
   }
   return IRC.group(propertyIR)
@@ -96,24 +103,39 @@ const diffPropertyToIR = (prop: { key: string; value: Diff<Structured> }) => {
 const diffToIR = (diff: Diff<Structured>): IR => {
   if ('type' in diff) {
     if (diff.type === 'Object') {
-      const objectIR: IR[] = ['{', IRC.lineOrSpace]
+      const objectIR: IR[] = []
       for (const prop of diff.properties) {
+        objectIR.push(IRC.lineOrSpace)
         // the values are the same type, so the key will be printed only once
         if ('type' in prop.value) {
-          objectIR.push(diffPropertyToIR(prop))
+          objectIR.push(diffPropertyToIR(prop), ',')
         } else {
           // The values are different types, so the key will be printed twice:
           // property: [ ... ]
           // property: "asdf"
           const { expected, received } = prop.value
           if (expected !== NOT_EXIST)
-            objectIR.push(diffPropertyToIR({ key: prop.key, value: expected }))
+            objectIR.push(
+              expOpen,
+              diffPropertyToIR({ key: prop.key, value: expected }),
+              ',',
+              expClose,
+            )
           if (received !== NOT_EXIST)
-            objectIR.push(diffPropertyToIR({ key: prop.key, value: received }))
+            objectIR.push(
+              recOpen,
+              diffPropertyToIR({ key: prop.key, value: received }),
+              ',',
+              recClose,
+            )
         }
-        objectIR.push(',', IRC.lineOrSpace)
       }
-      return IRC.group(objectIR.concat('}'))
+      return IRC.group([
+        '{',
+        IRC.ifBreak(IRC.indent(objectIR), IRC.group(objectIR)),
+        IRC.lineOrSpace,
+        '}',
+      ])
     }
     if (diff.type === 'String') {
       if (typeof diff.value === 'string') return '"' + diff.value + '"'
@@ -131,7 +153,7 @@ const diffToIR = (diff: Diff<Structured>): IR => {
   return 'TOODOOO'
 }
 
-const printWidth = 70
+const printWidth = 22
 const indentWidth = 2
 
 const IRToString = (
@@ -139,26 +161,19 @@ const IRToString = (
   indent: number,
   parentBroken: boolean,
   remainingWidth: number,
-  foo = false,
 ): {
   breakParent: boolean
   str: string
   markers?: [lineNo: number, marker: Marker][]
   width: number
 } => {
-  if (!foo)
-    console.log(
-      'indent is',
-      indent,
-      typeof ir === 'string' ? 'string' : ir.type,
-      IRToString(ir, indent, parentBroken, remainingWidth, true).str,
-    )
-  if (typeof ir === 'string')
+  if (typeof ir === 'string') {
     return {
       breakParent: ir.length > remainingWidth,
       str: ir,
       width: ir.length,
     }
+  }
   if (ir.type === IRC.types.IR_TEXT)
     return {
       breakParent: ir.width > remainingWidth,
@@ -218,7 +233,6 @@ const IRToString = (
     let str = ' '.repeat(indentWidth)
     let breakParent = false
     for (const c of ir.children) {
-      console.log('up', indent + indentWidth)
       const s = IRToString(
         c,
         indent + indentWidth,
@@ -228,7 +242,6 @@ const IRToString = (
       width += s.width
       str += s.str
       if (s.breakParent) breakParent = true
-      return s
     }
     return {
       str,
