@@ -1,4 +1,6 @@
 import * as colors from 'kolorist'
+import * as IRC from './irc'
+import type { IR, Marker } from './irc'
 
 const expectedColor = colors.green
 const receivedColor = colors.red
@@ -42,13 +44,13 @@ const printDiff = (expected: any, received: any): StructuredObject => {
         key: 'asdf',
         value: {
           expected: NOT_EXIST,
-          received: { type: 'String', value: 'no' },
+          received: { type: 'String', value: 'asdfProp' },
         },
       },
       {
         key: 'asdf2',
         value: {
-          expected: { type: 'String', value: 'no' },
+          expected: { type: 'String', value: 'asdf2Prop' },
           received: NOT_EXIST,
         },
       },
@@ -56,103 +58,15 @@ const printDiff = (expected: any, received: any): StructuredObject => {
         key: 'asdf-3',
         value: {
           type: 'String',
-          value: 'no',
+          value: 'asdf3Prop',
         },
       },
     ],
   }
 }
 
-type IR =
-  | string
-  | IRCommands.Group
-  | IRCommands.Text
-  | IRCommands.LineOrSpace
-  | IRCommands.IfBreak
-  | IRCommands.Indent
-  | IRCommands.Dedent
-
-// "Intermediate Representation"
-// This is used for determining when to break things onto multiple lines
-// Idea is from Prettier: https://prettier.io/docs/en/technical-details.html
-// More details: https://github.com/prettier/prettier/blob/master/commands.md
-namespace IRCommands {
-  export interface Group {
-    type: typeof IR_GROUP
-    marker?: Marker
-    children: IR[]
-    shouldBreak?: boolean | undefined
-  }
-  export interface Text {
-    type: typeof IR_TEXT
-    marker?: Marker
-    text: string
-    width: number
-  }
-  export interface LineOrSpace {
-    type: typeof IR_LINE_OR_SPACE
-  }
-  export interface IfBreak {
-    type: typeof IR_IF_BREAK
-    ifBreak: IR
-    ifNotBreak: IR
-  }
-  export interface Indent {
-    type: typeof IR_INDENT
-    children: IR[]
-  }
-  export interface Dedent {
-    type: typeof IR_DEDENT
-    children: IR[]
-  }
-}
-
 // this is naiive it doesn't handle reserved words or unicode
 const IDENTIFIER_REGEX = /^[$A-Z_][0-9A-Z_$]*$/i
-
-type Marker = '+' | '-'
-
-const IR_TEXT = Symbol('text')
-const IR_GROUP = Symbol('group')
-const IR_LINE_OR_SPACE = Symbol('lineOrSpace')
-const IR_IF_BREAK = Symbol('ifBreak')
-const IR_INDENT = Symbol('indent')
-const IR_DEDENT = Symbol('dedent')
-
-/** Intermediate Representation Commands */
-const IRC = {
-  /**
-   * You can also just use a string directly,
-   * this is only if you need to override the string width (i.e. to ignore ANSI escapes)
-   * or to add a marker
-   */
-  text(text: string, width = text.length, marker?: Marker): IRCommands.Text {
-    return { type: IR_TEXT, text, marker, width }
-  },
-  group(children: IR[], marker?: Marker): IRCommands.Group {
-    const shouldBreak =
-      children.some((c) => {
-        if (typeof c === 'string') return false
-        if (c.type === IR_TEXT && c.marker) return true
-        if (c.type === IR_GROUP && (c.shouldBreak || c.marker)) return true
-        return false
-      }) || undefined
-    return { type: IR_GROUP, children, shouldBreak, marker }
-  },
-  /** Prints a newline if the group breaks, or a space if the group doesn't */
-  lineOrSpace: {
-    type: IR_LINE_OR_SPACE,
-  } as IRCommands.LineOrSpace,
-  ifBreak(ifBreak: IR, ifNotBreak: IR = ''): IRCommands.IfBreak {
-    return { type: IR_IF_BREAK, ifBreak, ifNotBreak }
-  },
-  indent(children: IR[]): IRCommands.Indent {
-    return { type: IR_INDENT, children }
-  },
-  dedent(children: IR[]): IRCommands.Dedent {
-    return { type: IR_DEDENT, children }
-  },
-}
 
 const diffPropertyToIR = (prop: { key: string; value: Diff<Structured> }) => {
   const key = IDENTIFIER_REGEX.test(prop.key)
@@ -169,12 +83,11 @@ const diffPropertyToIR = (prop: { key: string; value: Diff<Structured> }) => {
   //   asdf
   // )
   const propertyIR: IR[] = [key + ':']
-  if (typeof valueIR === 'object' && valueIR.type === IR_GROUP) {
+  if (typeof valueIR === 'object' && valueIR.type === IRC.types.IR_GROUP) {
     propertyIR.push(' ', valueIR)
   } else {
     propertyIR.push(
-      IRC.lineOrSpace,
-      IRC.ifBreak(IRC.indent([valueIR]), valueIR),
+      IRC.ifBreak(IRC.indent([IRC.lineOrSpace, valueIR]), valueIR),
     )
   }
   return IRC.group(propertyIR)
@@ -226,19 +139,27 @@ const IRToString = (
   indent: number,
   parentBroken: boolean,
   remainingWidth: number,
+  foo = false,
 ): {
   breakParent: boolean
   str: string
   markers?: [lineNo: number, marker: Marker][]
   width: number
 } => {
+  if (!foo)
+    console.log(
+      'indent is',
+      indent,
+      typeof ir === 'string' ? 'string' : ir.type,
+      IRToString(ir, indent, parentBroken, remainingWidth, true).str,
+    )
   if (typeof ir === 'string')
     return {
       breakParent: ir.length > remainingWidth,
       str: ir,
       width: ir.length,
     }
-  if (ir.type === IR_TEXT)
+  if (ir.type === IRC.types.IR_TEXT)
     return {
       breakParent: ir.width > remainingWidth,
       str: ir.text,
@@ -246,7 +167,7 @@ const IRToString = (
       markers: ir.marker ? [[0, ir.marker]] : [],
       width: ir.width,
     }
-  if (ir.type === IR_GROUP) {
+  if (ir.type === IRC.types.IR_GROUP) {
     let out = ''
     let i = 0
     let groupWidth = 0
@@ -277,14 +198,14 @@ const IRToString = (
       width: groupWidth,
     }
   }
-  if (ir.type === IR_LINE_OR_SPACE)
+  if (ir.type === IRC.types.IR_LINE)
     return {
-      breakParent: remainingWidth === 1,
+      breakParent: true,
       // TODO: the indent there is not working
-      str: parentBroken ? '\n' + ' '.repeat(indent) : ' ',
-      width: parentBroken ? remainingWidth - printWidth : 1, // Reset the parent's width if a newline is printed
+      str: '\n' + ' '.repeat(indent),
+      width: remainingWidth - printWidth, // Reset the parent's width if a newline is printed
     }
-  if (ir.type === IR_IF_BREAK)
+  if (ir.type === IRC.types.IR_IF_BREAK)
     return IRToString(
       parentBroken ? ir.ifBreak : ir.ifNotBreak,
       indent,
@@ -292,11 +213,12 @@ const IRToString = (
       remainingWidth,
     )
 
-  if (ir.type === IR_INDENT) {
-    let width = 0
-    let str = ''
+  if (ir.type === IRC.types.IR_INDENT) {
+    let width = indentWidth
+    let str = ' '.repeat(indentWidth)
     let breakParent = false
     for (const c of ir.children) {
+      console.log('up', indent + indentWidth)
       const s = IRToString(
         c,
         indent + indentWidth,
