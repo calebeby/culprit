@@ -1,23 +1,45 @@
 import * as colors from 'kolorist'
 import * as IRC from './irc'
-import type { IR, Marker } from './irc'
+import type { IR } from './irc'
 
-const expectedColor = colors.green
-const receivedColor = colors.red
+const expectedColor = <T extends any>(input: T) => {
+  if (typeof input === 'string') return colors.green(input)
+  return [expOpen, input, expClose]
+}
+
+const receivedColor = <T extends any>(input: T) => {
+  if (typeof input === 'string') return colors.red(input)
+  return [recOpen, input, recClose]
+}
+
+const delim = '\0\0'
+
+const [expOpen, expClose] = colors
+  .green(delim)
+  .split(delim)
+  .map((c) => IRC.text(c, 0))
+
+const [recOpen, recClose] = colors
+  .red(delim)
+  .split(delim)
+  .map((c) => IRC.text(c, 0))
 
 const NOT_EXIST = Symbol()
 
 type Structured = StructuredString | StructuredObject
 
-type Diff<T> =
-  | T
-  | { expected: T | typeof NOT_EXIST; received: T | typeof NOT_EXIST }
+type Diff<ValueType, NotExistType = never> =
+  | ValueType
+  | {
+      expected: ValueType | NotExistType
+      received: ValueType | NotExistType
+    }
 
 interface StructuredObject {
   type: 'Object'
   properties: {
     key: string
-    value: Diff<Structured>
+    value: Diff<Structured, typeof NOT_EXIST>
   }[]
 }
 
@@ -26,17 +48,37 @@ interface StructuredString {
   value: Diff<string>
 }
 
-const printDiff = (expected: any, received: any): StructuredObject => {
+const printDiff = (expected: any, received: any): Structured => {
   return {
     type: 'Object',
     properties: [
       {
-        key: 'foo',
+        key: 'firstBreaks',
         value: {
           type: 'String',
           value: {
-            expected: 'hiiiiiiii',
-            received: 'noooooooo',
+            expected: 'too long-------------------------------------',
+            received: 'short',
+          },
+        },
+      },
+      {
+        key: 'secondBreaks',
+        value: {
+          type: 'String',
+          value: {
+            expected: 'short',
+            received: 'too long-------------------------------------',
+          },
+        },
+      },
+      {
+        key: 'neitherBreaks',
+        value: {
+          type: 'String',
+          value: {
+            expected: 'short',
+            received: 'also short',
           },
         },
       },
@@ -50,8 +92,8 @@ const printDiff = (expected: any, received: any): StructuredObject => {
                 key: 'hi',
                 value: {
                   type: 'String',
-                  // value: 'hiiiiiiiiiiiiiiiiiiiiiiiiiiii',
-                  value: 'hiiiiiiiiiiiiiii',
+                  value: 'hiiiiiiiiiiiiiiiiiiiiiiiiiiii',
+                  // value: 'hiii',
                 },
               },
             ],
@@ -115,43 +157,57 @@ const printDiff = (expected: any, received: any): StructuredObject => {
 // this is naiive it doesn't handle reserved words or unicode
 const IDENTIFIER_REGEX = /^[$A-Z_][0-9A-Z_$]*$/i
 
-const [expOpen, expClose] = expectedColor('reee')
-  .split('reee')
-  .map((c) => IRC.text(c, 0))
-const [recOpen, recClose] = receivedColor('reee')
-  .split('reee')
-  .map((c) => IRC.text(c, 0))
-
-const diffPropertyToIR = (
-  prop: { key: string; value: Diff<Structured> },
-  marker?: Marker,
-) => {
-  const key = IDENTIFIER_REGEX.test(prop.key)
-    ? prop.key
-    : JSON.stringify(prop.key)
-  const valueIR = diffToIR(prop.value)
-  // it formats in one of these ways:
-  // property: [ ... ],
-  // The next case is only if the value is not a group:
-  // property:
-  //   "really long string did not fit"
-  // The next case is if the value is a group, the group gets split:
-  // property: new Date(
-  //   asdf
-  // )
-  const propertyIR: IR[] = [key + ':']
-  if (
-    typeof valueIR === 'object' &&
-    !Array.isArray(valueIR) &&
-    valueIR.type === IRC.types.IR_GROUP
-  ) {
-    propertyIR.push(' ', valueIR)
-  } else {
-    propertyIR.push(
-      IRC.ifBreak(IRC.indent([IRC.line, valueIR]), [' ', valueIR]),
-    )
+const isGroup = (ir: IR): ir is IRC.Group => {
+  while (Array.isArray(ir)) {
+    if (ir.length !== 1) return false
+    ir = ir[0]
   }
-  return IRC.group(propertyIR, marker)
+  if (typeof ir === 'string') return false
+  return 'type' in ir && ir.type === IRC.types.IR_GROUP
+}
+
+const propertyToIR = (
+  key: string,
+  value: Diff<Structured, typeof NOT_EXIST>,
+): IR => {
+  if ('expected' in value) {
+    if (value.expected === NOT_EXIST && value.received !== NOT_EXIST)
+      return receivedColor(propertyToIR(key, value.received))
+    if (value.received === NOT_EXIST && value.expected !== NOT_EXIST)
+      return expectedColor(propertyToIR(key, value.expected))
+    if (value.expected === NOT_EXIST && value.received === NOT_EXIST) return []
+  }
+  const keyStr = (IDENTIFIER_REGEX.test(key) ? key : JSON.stringify(key)) + ':'
+  const valueIR = diffToIR(value as Diff<Structured>)
+  if (typeof valueIR === 'object' && 'expected' in valueIR) {
+    return [
+      IRC.forceBreak, // force the parent to break regardless because even in the "unbroken" state this takes up multiple lines
+      IRC.group([
+        keyStr,
+        IRC.indent([IRC.ifBreak(IRC.line, ' '), valueIR.expected]),
+        ',',
+        IRC.ifBreak(
+          IRC.indent([IRC.line, valueIR.received]), // don't print the key a 2nd time
+          [IRC.lineNonBreaking, keyStr, IRC.indent([' ', valueIR.received])],
+        ),
+      ]),
+    ]
+  }
+  // if the value is a group, then that means it is expandable
+  // If it is expandable, like an object, then we won't put a lineOrSpace after :
+  // foo: {
+  //   ...
+  // }
+  if (isGroup(valueIR)) {
+    return [keyStr + ' ', valueIR]
+  }
+  // otherwise the value is not a group, so it is probably not expandable:
+  // So we will put a lineOrSpace after : and do a conditional indent:
+  // foo:
+  //   "longString"
+
+  // the indent has no effect if it doesn't break, since no newlines are printed
+  return IRC.group([keyStr, IRC.indent([IRC.lineOrSpace, valueIR])])
 }
 
 const diffToIR = (diff: Diff<Structured>): IR => {
@@ -162,31 +218,11 @@ const diffToIR = (diff: Diff<Structured>): IR => {
       const lastProp = diff.properties[diff.properties.length - 1]
       for (const prop of diff.properties) {
         const comma = prop === lastProp ? IRC.ifBreak(',', '') : ','
-        objectIR.push(IRC.lineOrSpace)
-        // the values are the same type, so the key will be printed only once
-        if ('type' in prop.value) {
-          objectIR.push(diffPropertyToIR(prop), comma)
-        } else {
-          // The values are different types, so the key will be printed twice:
-          // property: [ ... ]
-          // property: "asdf"
-          const { expected, received } = prop.value
-          if (expected !== NOT_EXIST)
-            objectIR.push(
-              expOpen,
-              diffPropertyToIR({ key: prop.key, value: expected }, '-'),
-              comma,
-              expClose,
-              received !== NOT_EXIST ? IRC.line : '',
-            )
-          if (received !== NOT_EXIST)
-            objectIR.push(
-              recOpen,
-              diffPropertyToIR({ key: prop.key, value: received }, '+'),
-              comma,
-              recClose,
-            )
-        }
+        objectIR.push(
+          IRC.lineOrSpace,
+          propertyToIR(prop.key, prop.value),
+          comma,
+        )
       }
       return IRC.group([
         '{',
@@ -197,28 +233,28 @@ const diffToIR = (diff: Diff<Structured>): IR => {
     }
     if (diff.type === 'String') {
       if (typeof diff.value === 'string') return '"' + diff.value + '"'
-      const out: IR[] = []
       const { expected, received } = diff.value
-      if (expected !== NOT_EXIST) {
-        out.push('"' + expectedColor(expected) + '"')
-        if (received !== NOT_EXIST) out.push(IRC.line)
+      return {
+        expected: '"' + expectedColor(expected) + '"',
+        received: '"' + receivedColor(received) + '"',
       }
-      if (received !== NOT_EXIST) out.push('"' + receivedColor(received) + '"')
-      return out
     }
     return 'Toad'
-  } else {
-    // TODO
   }
-  return 'TOODOOO'
+  return {
+    expected: expectedColor(diffToIR(diff.expected)),
+    received: receivedColor(diffToIR(diff.received)),
+  }
 }
 
-const printWidth = 40
+const printWidth = 43
+// const printWidth = 30
 const indentWidth = 2
 
 const fits = (commands: IR[], width: number) => {
   let cmd: IR,
-    cmdIdx = 0
+    cmdIdx = 0,
+    origWidth = width
   // the order of the items in the queue doesn't actually matter
   // since we are just measuring the width
   const queue = commands.slice() // make a copy because we will modify it
@@ -229,9 +265,14 @@ const fits = (commands: IR[], width: number) => {
       width -= cmd.length
     } else if (Array.isArray(cmd)) {
       queue.push(...cmd)
+    } else if ('expected' in cmd) {
+      return false // doesn't fit because it has separate expected/received, which requires >1 line
     } else if (cmd.type === IRC.types.IR_TEXT) {
       width -= cmd.width
-    } else if (cmd.type === IRC.types.IR_LINE) {
+    } else if (
+      cmd.type === IRC.types.IR_LINE ||
+      cmd.type === IRC.types.IR_FORCE_BREAK
+    ) {
       // there is a line break, therefore it won't fit in the allocated space
       return false
     } else if (cmd.type === IRC.types.IR_GROUP) {
@@ -242,8 +283,13 @@ const fits = (commands: IR[], width: number) => {
       // measure using the non-broken version
       queue.push(cmd.ifNotBreak)
     } else if (cmd.type === IRC.types.IR_INDENT) {
-      // we don't care about the actual width of the indent (maybe we should?) TODO
+      // the indent doesn't actually have any effect unless a newline is printed
       queue.push(...cmd.children)
+    } else if (cmd.type === IRC.types.IR_LINE_NON_BREAKING) {
+      // a new line was formed
+      // since it is marked as non breaking don't break the group
+      // reset the measurement width
+      width = origWidth
     } else {
       // ignoring: dedent
     }
@@ -273,6 +319,10 @@ const IRToString = (ir: IR) => {
       queue.push(...cmd.slice().reverse())
     } else if (cmd === POP_GROUP_STACK) {
       groupStack.pop()
+    } else if ('expected' in cmd) {
+      // separate expected/received properties
+      queue.push(cmd.received, IRC.line, cmd.expected)
+      throw new Error('aaah')
     } else if (cmd.type === IRC.types.IR_TEXT) {
       // TODO: handle markers
       out.push(cmd.text)
@@ -285,12 +335,15 @@ const IRToString = (ir: IR) => {
       // queue is backwards
       queue.push(POP_GROUP_STACK, ...cmd.children.slice().reverse())
       cmd.shouldBreak = needsToBreak
-    } else if (cmd.type === IRC.types.IR_LINE) {
+    } else if (
+      cmd.type === IRC.types.IR_LINE ||
+      cmd.type === IRC.types.IR_LINE_NON_BREAKING
+    ) {
       out.push('\n' + ' '.repeat(currentIndent))
       pos = currentIndent // reset the position to just the indent since we are on a new line
     } else if (cmd.type === IRC.types.IR_IF_BREAK) {
-      const { shouldBreak } = groupStack[groupStack.length - 1] || {}
-      queue.push(shouldBreak ? cmd.ifBreak : cmd.ifNotBreak)
+      const group = groupStack[groupStack.length - 1] || {}
+      queue.push(group.shouldBreak ? cmd.ifBreak : cmd.ifNotBreak)
     } else if (cmd.type === IRC.types.IR_INDENT) {
       // ends with newline, put an indent after that
       if (out[out.length - 1] === '\n') {
@@ -301,6 +354,7 @@ const IRToString = (ir: IR) => {
       currentIndent += indentWidth
     } else if (cmd.type === IRC.types.IR_DEDENT) {
       currentIndent -= indentWidth
+    } else if (cmd.type === IRC.types.IR_FORCE_BREAK) {
     } else {
       // @ts-expect-error
       throw new Error(`unhandled, ${String(cmd.type)}`)
@@ -309,8 +363,13 @@ const IRToString = (ir: IR) => {
   return out.join('')
 }
 
-const formatDiff = (diff: StructuredObject) => {
-  return IRToString(diffToIR(diff))
+const formatDiff = (diff: Structured) => {
+  const ir = diffToIR(diff)
+  if (typeof ir === 'object' && 'received' in ir) {
+    return `Expected: ${IRToString(ir.expected)}
+Received: ${IRToString(ir.received)}`
+  }
+  return IRToString(ir)
 }
 
 const expect = (received: unknown) => {
