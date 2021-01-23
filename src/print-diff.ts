@@ -13,6 +13,12 @@ export const receivedColor = <T extends any>(input: T) => {
   return [recOpen, input, recClose]
 }
 
+export const dimColor = <T extends any>(input: T) => {
+  if (typeof input === 'string') return colors.gray(input)
+  return [dimOpen, input, dimClose]
+}
+
+
 const delim = '\0\0'
 
 const [expOpen, expClose] = colors
@@ -22,6 +28,11 @@ const [expOpen, expClose] = colors
 
 const [recOpen, recClose] = colors
   .red(delim)
+  .split(delim)
+  .map((c) => IRC.text(c, 0))
+
+const [dimOpen, dimClose] = colors
+  .gray(delim)
   .split(delim)
   .map((c) => IRC.text(c, 0))
 
@@ -64,7 +75,7 @@ const propertyToIR = (
           expectedMarker,
           valueIR.expected,
         ]),
-        ',',
+        dimColor(','),
         IRC.ifBreak(
           IRC.indent([IRC.line, receivedMarker, valueIR.received]), // don't print the key a 2nd time
           [
@@ -101,7 +112,7 @@ const diffToIR = (diff: Diff<Structured>): IR => {
       const lastProp = diff.properties[diff.properties.length - 1]
       let prop: typeof diff.properties[0]
       for (prop of diff.properties) {
-        const comma = prop === lastProp ? IRC.ifBreak(',', '') : ','
+        const comma = dimColor(prop === lastProp ? IRC.ifBreak(',', '') : ',')
         objectIR.push(
           IRC.lineOrSpace,
           propertyToIR(prop.key, prop.value),
@@ -109,10 +120,10 @@ const diffToIR = (diff: Diff<Structured>): IR => {
         )
       }
       return IRC.group([
-        '{',
+        dimColor('{'),
         IRC.ifBreak(IRC.indent(objectIR), objectIR),
         IRC.lineOrSpace,
-        '}',
+        dimColor('}'),
       ])
     }
     if (diff.type === 'Primitive') {
