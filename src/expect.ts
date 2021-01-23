@@ -59,7 +59,11 @@ const compare = (
       diff: toStructured(expected),
     }
   }
-  if (typeof expected !== typeof received) {
+  if (
+    typeof expected !== typeof received ||
+    expected === null || // check this in case typeof null === 'object'
+    received === null // we know they are not both null because we checked object.is
+  ) {
     return {
       isEqual: false,
       diff: {
@@ -82,7 +86,7 @@ const compare = (
     }
   }
   if (typeof expected === 'object') {
-    // we know they are not null because the object.is check or the differing typeof check above would've handled it
+    // we've already eliminated the case that either is null
     let isEqual = true
     const properties: { [key: string]: StructuredProperty } = {}
     let key,

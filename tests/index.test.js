@@ -49,11 +49,13 @@ test('objects', () => {
   expect({ foo: 'asdf' }).toEqual({ foo: 'asdf' })
   expect({ foo: { 123: 'hi' } }).toEqual({ foo: { 123: 'hi' } })
   // expect({ foo: { 123: 'hi' } }).toEqual({ foo: { 123: 'h' } })
-  expect({
-    ignoreMe: { huh: 'what' },
-    foo: { 123: 'hi' },
-  }).toEqual({
-    ignoreMe: { huh: 'what' },
-    foo: { 123.2345: 'h' },
-  })
+  // expect({
+  //   ignoreMe: { huh: 'what' },
+  //   foo: { 123: 'hi' },
+  // }).toEqual({
+  //   ignoreMe: { huh: 'what' },
+  //   foo: { 123.2345: 'h' },
+  // })
+  // expect(null).toEqual({})
+  // expect({}).toEqual(null)
 })
