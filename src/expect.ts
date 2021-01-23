@@ -1,34 +1,10 @@
-import * as colors from 'kolorist'
-import * as IRC from './irc'
-import type { IR } from './irc'
+import { expectedColor, formatDiff, receivedColor } from './print-diff'
 
-const expectedColor = <T extends any>(input: T) => {
-  if (typeof input === 'string') return colors.green(input)
-  return [expOpen, input, expClose]
-}
+export const NOT_EXIST = Symbol()
 
-const receivedColor = <T extends any>(input: T) => {
-  if (typeof input === 'string') return colors.red(input)
-  return [recOpen, input, recClose]
-}
+export type Structured = StructuredPrimitive | StructuredObject
 
-const delim = '\0\0'
-
-const [expOpen, expClose] = colors
-  .green(delim)
-  .split(delim)
-  .map((c) => IRC.text(c, 0))
-
-const [recOpen, recClose] = colors
-  .red(delim)
-  .split(delim)
-  .map((c) => IRC.text(c, 0))
-
-const NOT_EXIST = Symbol()
-
-type Structured = StructuredString | StructuredObject
-
-type Diff<ValueType, NotExistType = never> =
+export type Diff<ValueType, NotExistType = never> =
   | ValueType
   | {
       expected: ValueType | NotExistType
@@ -37,354 +13,136 @@ type Diff<ValueType, NotExistType = never> =
 
 interface StructuredObject {
   type: 'Object'
-  properties: {
-    key: string
-    value: Diff<Structured, typeof NOT_EXIST>
-  }[]
+  properties: StructuredProperty[]
 }
 
-interface StructuredString {
-  type: 'String'
-  value: Diff<string>
+interface StructuredProperty {
+  key: string
+  value: Diff<Structured, typeof NOT_EXIST>
 }
 
-const printDiff = (expected: any, received: any): Structured => {
-  return {
-    type: 'Object',
-    properties: [
-      {
-        key: 'firstBreaks',
-        value: {
-          type: 'String',
-          value: {
-            expected: 'too long-------------------------------------',
-            received: 'short',
-          },
-        },
+interface StructuredPrimitive {
+  type: 'Primitive'
+  value: Diff<string | number | boolean | null | undefined>
+}
+
+const toStructured = (value: unknown): Structured => {
+  if (
+    typeof value === 'number' ||
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    value === null ||
+    typeof value === 'undefined'
+  ) {
+    return { type: 'Primitive', value }
+  }
+  if (typeof value === 'object') {
+    return {
+      type: 'Object',
+      properties: Object.entries(value as {}).map(([key, val]) => {
+        return { key, value: toStructured(val) }
+      }),
+    }
+  }
+  throw new Error(`unhandled value in toStructured: ${value}`)
+}
+
+var has = Object.prototype.hasOwnProperty
+
+const compare = (
+  expected: unknown,
+  received: unknown,
+): { diff: Diff<Structured>; isEqual: boolean } => {
+  if (Object.is(expected, received)) {
+    return {
+      isEqual: true,
+      diff: toStructured(expected),
+    }
+  }
+  if (typeof expected !== typeof received) {
+    return {
+      isEqual: false,
+      diff: {
+        received: toStructured(received),
+        expected: toStructured(expected),
       },
-      {
-        key: 'secondBreaks',
-        value: {
-          type: 'String',
-          value: {
-            expected: 'short',
-            received: 'too long-------------------------------------',
-          },
-        },
+    }
+  }
+  if (
+    typeof expected === 'number' ||
+    typeof expected === 'string' ||
+    typeof expected === 'boolean'
+  ) {
+    return {
+      isEqual: false,
+      diff: {
+        type: 'Primitive',
+        value: { expected, received: received as typeof expected },
       },
-      {
-        key: 'neitherBreaks',
-        value: {
-          type: 'String',
-          value: {
-            expected: 'short',
-            received: 'also short',
-          },
-        },
-      },
-      {
-        key: 'sdf',
-        value: {
-          expected: {
-            type: 'Object',
-            properties: [
-              {
-                key: 'hi',
-                value: {
-                  type: 'String',
-                  value: 'hiiiiiiiiiiiiiiiiiiiiiiiiiiii',
-                  // value: 'hiii',
-                },
-              },
-            ],
-          },
-          received: { type: 'String', value: 'hi' },
-        },
-      },
-      {
-        key: 'hi',
-        value: {
-          type: 'Object',
-          properties: [
-            {
-              key: 'hiiii',
-              value: {
-                expected: {
-                  type: 'String',
-                  value: 'hi',
-                },
-                received: {
-                  type: 'Object',
-                  properties: [],
-                },
-              },
-            },
-            {
-              key: 'hi2',
-              value: {
-                type: 'String',
-                value: 'hi',
-              },
-            },
-          ],
-        },
-      },
-      {
-        key: 'asdf',
+    }
+  }
+  if (typeof expected === 'object') {
+    // we know they are not null because the object.is check or the differing typeof check above would've handled it
+    let isEqual = true
+    const properties: { [key: string]: StructuredProperty } = {}
+    let key,
+      valDiff,
+      prop = {} as StructuredProperty
+    for (key in expected) {
+      if (!has.call(expected, key)) continue // inherited/prototype
+      prop = { key } as StructuredProperty
+      if (has.call(received, key)) {
+        // @ts-expect-error
+        valDiff = compare(expected[key], received[key])
+        if (!valDiff.isEqual) isEqual = false
+        prop.value = valDiff.diff
+      } else {
+        prop.value = {
+          // @ts-expect-error
+          expected: toStructured(expected[key]),
+          received: NOT_EXIST,
+        }
+        isEqual = false
+      }
+      properties[key] = prop
+    }
+    for (key in received as {}) {
+      if (properties[key]) continue
+      if (!has.call(received, key)) continue // inherited/prototype
+      isEqual = false
+      properties[key] = {
+        key,
         value: {
           expected: NOT_EXIST,
-          received: { type: 'String', value: 'asdfProp' },
+          // @ts-expect-error
+          received: toStructured(received[key]),
         },
-      },
-      {
-        key: 'asdf2',
-        value: {
-          expected: { type: 'String', value: 'asdf2Prop' },
-          received: NOT_EXIST,
-        },
-      },
-      {
-        key: 'asdf-3',
-        value: {
-          type: 'String',
-          value: 'asdf3Prop',
-        },
-      },
-    ],
-  }
-}
-
-// this is naiive it doesn't handle reserved words or unicode
-const IDENTIFIER_REGEX = /^[$A-Z_][0-9A-Z_$]*$/i
-
-const isGroup = (ir: IR): ir is IRC.Group => {
-  while (Array.isArray(ir)) {
-    if (ir.length !== 1) return false
-    ir = ir[0]
-  }
-  if (typeof ir === 'string') return false
-  return 'type' in ir && ir.type === IRC.types.IR_GROUP
-}
-
-const propertyToIR = (
-  key: string,
-  value: Diff<Structured, typeof NOT_EXIST>,
-): IR => {
-  if ('expected' in value) {
-    if (value.expected === NOT_EXIST && value.received !== NOT_EXIST)
-      return receivedColor(propertyToIR(key, value.received))
-    if (value.received === NOT_EXIST && value.expected !== NOT_EXIST)
-      return expectedColor(propertyToIR(key, value.expected))
-    if (value.expected === NOT_EXIST && value.received === NOT_EXIST) return []
-  }
-  const keyStr = (IDENTIFIER_REGEX.test(key) ? key : JSON.stringify(key)) + ':'
-  const valueIR = diffToIR(value as Diff<Structured>)
-  if (typeof valueIR === 'object' && 'expected' in valueIR) {
-    return [
-      IRC.forceBreak, // force the parent to break regardless because even in the "unbroken" state this takes up multiple lines
-      IRC.group([
-        keyStr,
-        IRC.indent([IRC.ifBreak(IRC.line, ' '), valueIR.expected]),
-        ',',
-        IRC.ifBreak(
-          IRC.indent([IRC.line, valueIR.received]), // don't print the key a 2nd time
-          [IRC.lineNonBreaking, keyStr, IRC.indent([' ', valueIR.received])],
-        ),
-      ]),
-    ]
-  }
-  // if the value is a group, then that means it is expandable
-  // If it is expandable, like an object, then we won't put a lineOrSpace after :
-  // foo: {
-  //   ...
-  // }
-  if (isGroup(valueIR)) {
-    return [keyStr + ' ', valueIR]
-  }
-  // otherwise the value is not a group, so it is probably not expandable:
-  // So we will put a lineOrSpace after : and do a conditional indent:
-  // foo:
-  //   "longString"
-
-  // the indent has no effect if it doesn't break, since no newlines are printed
-  return IRC.group([keyStr, IRC.indent([IRC.lineOrSpace, valueIR])])
-}
-
-const diffToIR = (diff: Diff<Structured>): IR => {
-  if ('type' in diff) {
-    if (diff.type === 'Object') {
-      if (diff.properties.length === 0) return '{}'
-      const objectIR: IR[] = []
-      const lastProp = diff.properties[diff.properties.length - 1]
-      for (const prop of diff.properties) {
-        const comma = prop === lastProp ? IRC.ifBreak(',', '') : ','
-        objectIR.push(
-          IRC.lineOrSpace,
-          propertyToIR(prop.key, prop.value),
-          comma,
-        )
-      }
-      return IRC.group([
-        '{',
-        IRC.ifBreak(IRC.indent(objectIR), objectIR),
-        IRC.lineOrSpace,
-        '}',
-      ])
-    }
-    if (diff.type === 'String') {
-      if (typeof diff.value === 'string') return '"' + diff.value + '"'
-      const { expected, received } = diff.value
-      return {
-        expected: '"' + expectedColor(expected) + '"',
-        received: '"' + receivedColor(received) + '"',
       }
     }
-    return 'Toad'
-  }
-  return {
-    expected: expectedColor(diffToIR(diff.expected)),
-    received: receivedColor(diffToIR(diff.received)),
-  }
-}
-
-const printWidth = 43
-// const printWidth = 30
-const indentWidth = 2
-
-const fits = (commands: IR[], width: number) => {
-  let cmd: IR,
-    cmdIdx = 0,
-    origWidth = width
-  // the order of the items in the queue doesn't actually matter
-  // since we are just measuring the width
-  const queue = commands.slice() // make a copy because we will modify it
-  while (width > 0) {
-    if (cmdIdx >= queue.length) return true
-    cmd = queue[cmdIdx]
-    if (typeof cmd === 'string') {
-      width -= cmd.length
-    } else if (Array.isArray(cmd)) {
-      queue.push(...cmd)
-    } else if ('expected' in cmd) {
-      return false // doesn't fit because it has separate expected/received, which requires >1 line
-    } else if (cmd.type === IRC.types.IR_TEXT) {
-      width -= cmd.width
-    } else if (
-      cmd.type === IRC.types.IR_LINE ||
-      cmd.type === IRC.types.IR_FORCE_BREAK
-    ) {
-      // there is a line break, therefore it won't fit in the allocated space
-      return false
-    } else if (cmd.type === IRC.types.IR_GROUP) {
-      if (cmd.shouldBreak) return false
-      queue.push(...cmd.children)
-    } else if (cmd.type === IRC.types.IR_IF_BREAK) {
-      // in order to see if everything will fit in one line,
-      // measure using the non-broken version
-      queue.push(cmd.ifNotBreak)
-    } else if (cmd.type === IRC.types.IR_INDENT) {
-      // the indent doesn't actually have any effect unless a newline is printed
-      queue.push(...cmd.children)
-    } else if (cmd.type === IRC.types.IR_LINE_NON_BREAKING) {
-      // a new line was formed
-      // since it is marked as non breaking don't break the group
-      // reset the measurement width
-      width = origWidth
-    } else {
-      // ignoring: dedent
-    }
-
-    cmdIdx++
-  }
-  return false
-}
-
-const POP_GROUP_STACK = Symbol('POP_GROUP_STACK')
-
-const IRToString = (ir: IR) => {
-  // the queue holds next-to-handle items at the end
-  // (so it is in reverse of the actual output)
-  const queue: (IR | typeof POP_GROUP_STACK)[] = [ir]
-  let cmd: IR | typeof POP_GROUP_STACK | undefined
-  let out: string[] = []
-  const groupStack: IRC.Group[] = []
-  /** Position in current line (including indents) */
-  let pos = 0
-  let currentIndent = 0
-  while ((cmd = queue.pop()) !== undefined) {
-    if (typeof cmd === 'string') {
-      out.push(cmd)
-      pos += cmd.length
-    } else if (Array.isArray(cmd)) {
-      queue.push(...cmd.slice().reverse())
-    } else if (cmd === POP_GROUP_STACK) {
-      groupStack.pop()
-    } else if ('expected' in cmd) {
-      // separate expected/received properties
-      queue.push(cmd.received, IRC.line, cmd.expected)
-      throw new Error('aaah')
-    } else if (cmd.type === IRC.types.IR_TEXT) {
-      // TODO: handle markers
-      out.push(cmd.text)
-      pos += cmd.width
-    } else if (cmd.type === IRC.types.IR_GROUP) {
-      groupStack.push(cmd)
-      const remainingSpaceInLine = printWidth - pos
-      const needsToBreak =
-        cmd.shouldBreak || !fits(cmd.children, remainingSpaceInLine)
-      // queue is backwards
-      queue.push(POP_GROUP_STACK, ...cmd.children.slice().reverse())
-      cmd.shouldBreak = needsToBreak
-    } else if (
-      cmd.type === IRC.types.IR_LINE ||
-      cmd.type === IRC.types.IR_LINE_NON_BREAKING
-    ) {
-      out.push('\n' + ' '.repeat(currentIndent))
-      pos = currentIndent // reset the position to just the indent since we are on a new line
-    } else if (cmd.type === IRC.types.IR_IF_BREAK) {
-      const group = groupStack[groupStack.length - 1] || {}
-      queue.push(group.shouldBreak ? cmd.ifBreak : cmd.ifNotBreak)
-    } else if (cmd.type === IRC.types.IR_INDENT) {
-      // ends with newline, put an indent after that
-      if (out[out.length - 1] === '\n') {
-        out.push(' '.repeat(currentIndent), '\n')
-      }
-      // queue is backwards
-      queue.push(IRC.dedent, ...cmd.children.slice().reverse())
-      currentIndent += indentWidth
-    } else if (cmd.type === IRC.types.IR_DEDENT) {
-      currentIndent -= indentWidth
-    } else if (cmd.type === IRC.types.IR_FORCE_BREAK) {
-    } else {
-      // @ts-expect-error
-      throw new Error(`unhandled, ${String(cmd.type)}`)
+    return {
+      isEqual,
+      diff: {
+        type: 'Object',
+        properties: Object.values(properties),
+      },
     }
   }
-  return out.join('')
-}
-
-const formatDiff = (diff: Structured) => {
-  const ir = diffToIR(diff)
-  if (typeof ir === 'object' && 'received' in ir) {
-    return `Expected: ${IRToString(ir.expected)}
-Received: ${IRToString(ir.received)}`
-  }
-  return IRToString(ir)
+  throw new Error(`unhandled value in compare: ${expected}`)
 }
 
 const expect = (received: unknown) => {
   const matchers = {
     toEqual(expected: any) {
-      const diff = printDiff(expected, received)
+      // shortcut to skip printing
+      if (Object.is(expected, received)) return
+      const { diff, isEqual } = compare(expected, received)
+      if (isEqual) return
 
       const diffString = formatDiff(diff)
 
       const message = `expect(${receivedColor(
         'received',
       )}).toEqual(${expectedColor('expected')})
-
-${expectedColor('- Expected')}
-${receivedColor('+ Received')}
 
 ${diffString}`
 
