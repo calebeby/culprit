@@ -22,7 +22,7 @@ interface TestSuite {
 const main = async () => {
   const cwd = process.cwd()
   const thisFile = import.meta.url
-  const testFiles = await tinyGlob('**/tests/**.{j,t}s')
+  const testFiles = await tinyGlob('tests/**.{j,t}s')
   const testSuites = new Map<string, TestSuite>(
     testFiles.map((file) => [file, { file, tests: [] }]),
   )
