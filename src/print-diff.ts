@@ -1,6 +1,6 @@
 import * as colors from 'kolorist'
 import * as IRC from './irc'
-import type { IR } from './irc'
+import type { IR, Marker } from './irc'
 import { Diff, NOT_EXIST, Structured } from './expect'
 
 export const expectedColor = <T extends any>(input: T) => {
@@ -30,15 +30,26 @@ const toString = (input: number | string | boolean | null | undefined) => {
   return String(input)
 }
 
+const expectedMarker = IRC.text('', 0, '-')
+const receivedMarker = IRC.text('', 0, '+')
+
 const propertyToIR = (
   key: string,
   value: Diff<Structured, typeof NOT_EXIST>,
 ): IR => {
   if ('expected' in value) {
     if (value.expected === NOT_EXIST && value.received !== NOT_EXIST)
-      return [receivedColor(propertyToIR(key, value.received)), IRC.forceBreak]
+      return [
+        receivedMarker,
+        receivedColor(propertyToIR(key, value.received)),
+        IRC.forceBreak,
+      ]
     if (value.received === NOT_EXIST && value.expected !== NOT_EXIST)
-      return [expectedColor(propertyToIR(key, value.expected)), IRC.forceBreak]
+      return [
+        expectedMarker,
+        expectedColor(propertyToIR(key, value.expected)),
+        IRC.forceBreak,
+      ]
     if (value.expected === NOT_EXIST && value.received === NOT_EXIST) return []
   }
   const keyStr = (PROP_REGEX.test(key) ? key : JSON.stringify(key)) + ':'
@@ -48,11 +59,19 @@ const propertyToIR = (
       IRC.forceBreak, // force the parent to break regardless because even in the "unbroken" state this takes up multiple lines
       IRC.group([
         keyStr,
-        IRC.indent([IRC.ifBreak(IRC.line, ' '), valueIR.expected]),
+        IRC.indent([
+          IRC.ifBreak(IRC.line, ' '),
+          expectedMarker,
+          valueIR.expected,
+        ]),
         ',',
         IRC.ifBreak(
-          IRC.indent([IRC.line, valueIR.received]), // don't print the key a 2nd time
-          [IRC.lineNonBreaking, keyStr, IRC.indent([' ', valueIR.received])],
+          IRC.indent([IRC.line, receivedMarker, valueIR.received]), // don't print the key a 2nd time
+          [
+            IRC.lineNonBreaking,
+            keyStr,
+            IRC.indent([' ', receivedMarker, valueIR.received]),
+          ],
         ),
       ]),
     ]
@@ -180,17 +199,19 @@ const fits = (commands: IR[], width: number) => {
   return false
 }
 
-const printWidth = 65
+const printWidth = 80
 const indentWidth = 2
 
 const POP_GROUP_STACK = Symbol('POP_GROUP_STACK')
 
-const IRToString = (ir: IR) => {
+const IRToString = (ir: IR, printMarkers = true) => {
   // the queue holds next-to-handle items at the end
   // (so it is in reverse of the actual output)
   const queue: (IR | typeof POP_GROUP_STACK)[] = [ir]
   let cmd: IR | typeof POP_GROUP_STACK | undefined
   let out: string[] = []
+  let lineCount = 0
+  const markers: { [lineNo: number]: Marker } = {}
   const groupStack: IRC.Group[] = []
   /** Position in current line (including indents) */
   let pos = 0
@@ -208,12 +229,14 @@ const IRToString = (ir: IR) => {
       queue.push(cmd.received, IRC.line, cmd.expected)
       throw new Error('aaah')
     } else if (cmd.type === IRC.types.IR_TEXT) {
-      // TODO: handle markers
+      if (printMarkers && cmd.marker) {
+        markers[lineCount] = cmd.marker
+      }
       out.push(cmd.text)
       pos += cmd.width
     } else if (cmd.type === IRC.types.IR_GROUP) {
       groupStack.push(cmd)
-      const remainingSpaceInLine = printWidth - pos
+      const remainingSpaceInLine = printWidth - (printMarkers ? 2 : 0) - pos
       const needsToBreak =
         cmd.shouldBreak || !fits(cmd.children, remainingSpaceInLine)
       // queue is backwards
@@ -223,6 +246,7 @@ const IRToString = (ir: IR) => {
       cmd.type === IRC.types.IR_LINE ||
       cmd.type === IRC.types.IR_LINE_NON_BREAKING
     ) {
+      lineCount++
       out.push('\n' + ' '.repeat(currentIndent))
       pos = currentIndent // reset the position to just the indent since we are on a new line
     } else if (cmd.type === IRC.types.IR_IF_BREAK) {
@@ -244,29 +268,50 @@ const IRToString = (ir: IR) => {
       throw new Error(`unhandled, ${String(cmd.type)}`)
     }
   }
-  return out.join('')
+  lineCount = 0
+  const fullString = out.join('')
+  if (printMarkers) {
+    return fullString
+      .split('\n')
+      .map((line, i) => {
+        const m = markers[i]
+          ? markers[i] === '-'
+            ? expectedColor('- ')
+            : receivedColor('+ ')
+          : '  '
+        return m + line
+      })
+      .join('\n')
+  }
+  return fullString
 }
 
 export const formatDiff = (diff: Diff<Structured>) => {
   const ir = diffToIR(diff)
   if (typeof ir === 'object' && 'received' in ir) {
-    return IRToString([
-      IRC.group([
-        'Expected:',
-        IRC.ifBreak(IRC.indent([IRC.line, ir.expected, IRC.line]), [
-          ' ',
-          ir.expected,
+    return IRToString(
+      [
+        IRC.group([
+          'Expected:',
+          IRC.ifBreak(IRC.indent([IRC.line, ir.expected, IRC.line]), [
+            ' ',
+            ir.expected,
+          ]),
         ]),
-      ]),
-      IRC.line,
-      IRC.group([
-        'Received:',
-        IRC.ifBreak(IRC.indent([IRC.line, ir.received]), [' ', ir.received]),
-      ]),
-    ])
+        IRC.line,
+        IRC.group([
+          'Received:',
+          IRC.ifBreak(IRC.indent([IRC.line, ir.received]), [' ', ir.received]),
+        ]),
+      ],
+      false,
+    )
   }
-  return `${expectedColor('- Expected')}
-${receivedColor('+ Received')}
-
-${IRToString(ir)}`
+  return (
+    expectedColor('- Expected') +
+    '\n' +
+    receivedColor('+ Received') +
+    '\n\n' +
+    IRToString(ir)
+  )
 }

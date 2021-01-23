@@ -43,6 +43,11 @@ test('primitives', () => {
 
 test('objects', () => {
   expect({}).toEqual({})
+  // expect({
+  //   foo: 'hiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii',
+  // }).toEqual({
+  //   foo: 'bar',
+  // })
   // expect({ foo: 'hi' }).toEqual({ foo: 'bar' })
   // expect({ foo: 'asdf' }).toEqual({ asdf: 'hi' })
   // expect({ foo: 'asdf' }).toEqual(true)
