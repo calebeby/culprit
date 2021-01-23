@@ -1,0 +1,8 @@
+export const IR_TEXT = Symbol('text')
+export const IR_GROUP = Symbol('group')
+export const IR_LINE = Symbol('line')
+export const IR_LINE_NON_BREAKING = Symbol('lineNonBreaking')
+export const IR_FORCE_BREAK = Symbol('break')
+export const IR_IF_BREAK = Symbol('ifBreak')
+export const IR_INDENT = Symbol('indent')
+export const IR_DEDENT = Symbol('dedent')
