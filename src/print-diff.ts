@@ -99,7 +99,8 @@ const diffToIR = (diff: Diff<Structured>): IR => {
       if (diff.properties.length === 0) return '{}'
       const objectIR: IR[] = []
       const lastProp = diff.properties[diff.properties.length - 1]
-      for (const prop of diff.properties) {
+      let prop: typeof diff.properties[0]
+      for (prop of diff.properties) {
         const comma = prop === lastProp ? IRC.ifBreak(',', '') : ','
         objectIR.push(
           IRC.lineOrSpace,
