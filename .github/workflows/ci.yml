@@ -16,7 +16,7 @@ jobs:
       - name: npm install
         uses: bahmutov/npm-install@v1
       - name: Build
-        run: npm run build
+        run: npm run build && npm link
       - name: Test
         run: npm test
       - name: Type
