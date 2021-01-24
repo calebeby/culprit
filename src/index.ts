@@ -28,9 +28,11 @@ const main = async () => {
   )
   await Promise.all(
     testFiles.map(async (file) => {
+      // @ts-expect-error
       global.expect = expectGlobal
+      // @ts-expect-error
       global.test = (name: string, fn: () => void) => {
-        testSuites.get(file).tests.push({ name, fn })
+        testSuites.get(file)!.tests.push({ name, fn })
       }
       try {
         await import(path.join(cwd, file))
