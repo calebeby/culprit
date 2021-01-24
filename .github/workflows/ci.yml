@@ -1,0 +1,25 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  main:
+    strategy:
+      matrix:
+        node: [14, 15]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+      - name: Setup node
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node }}
+      - name: npm install
+        uses: bahmutov/npm-install@v1
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+      - name: Type
+        run: npm run type
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v1

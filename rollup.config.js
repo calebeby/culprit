@@ -88,6 +88,7 @@ const config = {
     dir: 'dist',
     entryFileNames: '[name].mjs',
     chunkFileNames: '[name]-[hash].mjs',
+    sourcemap: true,
   },
 }
 
