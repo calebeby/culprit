@@ -62,7 +62,7 @@ const main = async () => {
                 ? parsedStack.slice(0, idxOfStackInThisFile)
                 : parsedStack
             const loc = stackSubset[0]
-            if (loc) {
+            if (loc && loc.line !== -1) {
               const frame = createCodeFrame(
                 await fs.readFile(file, 'utf8'),
                 loc.line - 1,
@@ -71,12 +71,12 @@ const main = async () => {
               errMsg += '\n' + frame + '\n'
             }
             errMsg += stackSubset
-              .map(
-                (s) =>
-                  `at ${s.name} (${colors.cyan(
-                    path.relative(cwd, fileURLToPath(s.fileName)),
-                  )}:${s.line}:${s.column})`,
-              )
+              .map((s) => {
+                if (!s.fileName) return s.raw.trim()
+                return `at ${s.name} (${colors.cyan(
+                  path.relative(cwd, fileURLToPath(s.fileName)),
+                )}:${s.line}:${s.column})`
+              })
               .join('\n')
             console.error(colors.bold(colors.red(`  ● ${test.name}`)) + '\n')
             console.error(

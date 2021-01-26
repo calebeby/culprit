@@ -18,7 +18,7 @@ jobs:
       - name: Build
         run: npm run build && npm link
       - name: Test
-        run: npm test
+        run: npm run test:coverage
       - name: Type
         run: npm run type
       - name: Upload coverage report

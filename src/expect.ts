@@ -1,8 +1,17 @@
-import { expectedColor, formatDiff, receivedColor } from './print-diff'
+import {
+  printStructured,
+  expectedColor,
+  formatDiff,
+  receivedColor,
+} from './print-diff'
+import * as colors from 'kolorist'
 
 export const NOT_EXIST = Symbol()
 
-export type Structured = StructuredPrimitive | StructuredObject
+export type Structured =
+  | StructuredPrimitive
+  | StructuredObject
+  | StructuredError
 
 export type Diff<ValueType, NotExistType = never> =
   | ValueType
@@ -14,6 +23,11 @@ export type Diff<ValueType, NotExistType = never> =
 interface StructuredObject {
   type: 'Object'
   properties: StructuredProperty[]
+}
+
+interface StructuredError {
+  type: 'Error'
+  message: Diff<string>
 }
 
 interface StructuredProperty {
@@ -37,6 +51,12 @@ const toStructured = (value: unknown): Structured => {
     return { type: 'Primitive', value }
   }
   if (typeof value === 'object') {
+    if (value instanceof Error) {
+      return {
+        type: 'Error',
+        message: value.message,
+      }
+    }
     return {
       type: 'Object',
       properties: Object.entries(value as {}).map(([key, val]) => {
@@ -62,7 +82,7 @@ const compare = (
   if (
     typeof expected !== typeof received ||
     expected === null || // check this in case typeof null === 'object'
-    received === null // we know they are not both null because we checked object.is
+    received === null // we know they are not both null because we checked Object.is
   ) {
     return {
       isEqual: false,
@@ -87,6 +107,24 @@ const compare = (
   }
   if (typeof expected === 'object') {
     // we've already eliminated the case that either is null
+
+    if (expected instanceof Error && received instanceof Error) {
+      // TODO: check/diff Error.name too? And/or the constructor (name?)
+      const isEqual = expected.message === received.message
+      return {
+        isEqual,
+        diff: isEqual
+          ? toStructured(expected)
+          : {
+              type: 'Error',
+              message: {
+                expected: expected.message,
+                received: received.message,
+              },
+            },
+      }
+    }
+
     let isEqual = true
     const properties: { [key: string]: StructuredProperty } = {}
     let key,
@@ -134,25 +172,82 @@ const compare = (
   throw new Error(`unhandled value in compare: ${expected}`)
 }
 
+const printRecieved = (received: unknown) =>
+  receivedColor(printStructured(toStructured(received)))
+
+const printExpected = (expected: unknown) =>
+  expectedColor(printStructured(toStructured(expected)))
+
 const expect = (received: unknown) => {
   const matchers = {
-    toEqual(expected: any) {
+    toEqual(expected: unknown) {
       // shortcut to skip printing
       if (Object.is(expected, received)) return
       const { diff, isEqual } = compare(expected, received)
       if (isEqual) return
 
-      const diffString = formatDiff(diff)
-
       const message = `expect(${receivedColor(
         'received',
       )}).toEqual(${expectedColor('expected')})
 
-${diffString}`
+${formatDiff(diff)}`
 
       throw removeFuncFromStackTrace(
         new MatcherError(message),
         matchers.toEqual,
+      )
+    },
+    toThrow(...args: [expected?: unknown]) {
+      const [expected] = args
+      const hasExpected = args.length > 0 ? true : ''
+      // received is the function to call
+      const fnHint = colors.blue('func')
+      const matcherHint = `expect(${fnHint}).toThrow(${
+        hasExpected && expectedColor('expected')
+      })`
+      if (typeof received !== 'function') {
+        const msg = `${matcherHint}
+
+${fnHint} must be a function
+
+${fnHint} was ${printRecieved(received)}`
+        throw removeFuncFromStackTrace(new MatcherError(msg), matchers.toThrow)
+      }
+      let thrown: unknown
+      let didThrow = false
+      try {
+        // call the function, make sure it throws
+        received()
+      } catch (_thrown) {
+        thrown = _thrown
+        didThrow = true
+      }
+      if (!didThrow) {
+        const msg = `${matcherHint}
+
+${
+  hasExpected &&
+  `Expected ${fnHint} to throw ${printExpected(expected)}
+
+But `
+}${fnHint} ${receivedColor('did not throw')}`
+        throw removeFuncFromStackTrace(new MatcherError(msg), matchers.toThrow)
+      }
+      if (!hasExpected) return thrown
+      // shortcut to skip printing
+      if (Object.is(expected, thrown)) return thrown
+      const { diff, isEqual } = compare(expected, thrown)
+      if (isEqual) return thrown
+
+      const message = `${matcherHint}
+
+${fnHint} did not throw the ${expectedColor('expected')} value
+
+${formatDiff(diff)}`
+
+      throw removeFuncFromStackTrace(
+        new MatcherError(message),
+        matchers.toThrow,
       )
     },
   }

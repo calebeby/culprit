@@ -39,7 +39,7 @@ const globalTypes = {
   },
 }
 
-// strip the symbol name (doesn't affect functionality): Symbol('asdf')
+// strip the symbol name (doesn't affect functionality): Symbol('asdf') => Symbol
 /** @type {import('@babel/core').PluginObj} */
 const stripSymbolName = {
   name: 'strip-symbol-name',

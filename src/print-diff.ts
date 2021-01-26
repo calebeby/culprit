@@ -18,7 +18,6 @@ export const dimColor = <T extends any>(input: T) => {
   return [dimOpen, input, dimClose]
 }
 
-
 const delim = '\0\0'
 
 const [expOpen, expClose] = colors
@@ -104,6 +103,8 @@ const propertyToIR = (
   return IRC.group([keyStr, IRC.indent([IRC.lineOrSpace, valueIR])])
 }
 
+const dimComma = dimColor(',')
+
 const diffToIR = (diff: Diff<Structured>): IR => {
   if ('type' in diff) {
     if (diff.type === 'Object') {
@@ -112,7 +113,7 @@ const diffToIR = (diff: Diff<Structured>): IR => {
       const lastProp = diff.properties[diff.properties.length - 1]
       let prop: typeof diff.properties[0]
       for (prop of diff.properties) {
-        const comma = dimColor(prop === lastProp ? IRC.ifBreak(',', '') : ',')
+        const comma = prop === lastProp ? IRC.ifBreak(dimComma, '') : dimComma
         objectIR.push(
           IRC.lineOrSpace,
           propertyToIR(prop.key, prop.value),
@@ -142,6 +143,28 @@ const diffToIR = (diff: Diff<Structured>): IR => {
       }
       if (typeof diff.value === 'string') return '"' + diff.value + '"'
       return toString(diff.value)
+    } else if (diff.type === 'Error') {
+      let value =
+        typeof diff.message === 'object'
+          ? [
+              expectedMarker,
+              expectedColor(
+                diffToIR({ type: 'Primitive', value: diff.message.expected }),
+              ),
+              dimComma,
+              IRC.line,
+              receivedMarker,
+              receivedColor(
+                diffToIR({ type: 'Primitive', value: diff.message.received }),
+              ),
+              dimComma,
+            ]
+          : diffToIR({ type: 'Primitive', value: diff.message })
+      return IRC.group([
+        'new Error(',
+        IRC.ifBreak([IRC.indent([IRC.line, value]), IRC.line], value),
+        ')',
+      ])
     }
     throw new Error(`diffToIR failed on ${JSON.stringify(diff)}`)
   }
@@ -296,6 +319,11 @@ const IRToString = (ir: IR, printMarkers = true) => {
       .join('\n')
   }
   return fullString
+}
+
+export const printStructured = (structured: Structured) => {
+  const ir = diffToIR(structured)
+  return IRToString(ir, false)
 }
 
 export const formatDiff = (diff: Diff<Structured>) => {
